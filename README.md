@@ -17,17 +17,65 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
-Explain your design in plain language.
+Real-world recommenders like Spotify or YouTube combine two strategies: collaborative filtering (learning from what millions of similar users enjoy) and content-based filtering (matching the actual attributes of songs to a user's taste profile). Our version focuses on content-based filtering — no other users needed. Each song is described by a set of numeric and categorical features, and the system scores every song by measuring how closely it matches what the user prefers. The closer the match across all features, the higher the score. Songs are then ranked by score and the top results are returned as recommendations. This approach is transparent, explainable, and works even for a brand-new user with no listening history.
 
-Some prompts to answer:
+### Scoring Rule (one song)
 
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-- What information does your `UserProfile` store
-- How does your `Recommender` compute a score for each song
-- How do you choose which songs to recommend
+For each numeric feature, we use a proximity score — not "higher is better," but "closer to the user's preference is better." The formula for a single numeric feature is:
 
-You can include a simple diagram or bullet list if helpful.
+```
+proximity = 1 - |song_value - user_preference|
+```
+
+This gives 1.0 for a perfect match and approaches 0.0 as the values diverge. Each feature is then multiplied by its weight and summed into a final score:
+
+```
+score = (w_energy   × proximity(energy))
+      + (w_valence  × proximity(valence))
+      + (w_acoustic × proximity(acousticness))
+      + (w_dance    × proximity(danceability))
+      + (w_genre    × exact_match(genre))
+      + (w_mood     × exact_match(mood))
+```
+
+Categorical features (genre, mood) use a binary match: 1.0 if they match, 0.0 if not.
+
+### Weights
+
+Genre carries the highest weight because it represents the broadest stylistic boundary — recommending a metal track to a lofi listener is a bigger miss than a slight energy mismatch. Mood is weighted second because it captures emotional intent (a user wanting "chill" music doesn't want "intense" regardless of genre). Numeric features like energy and valence are weighted next since they define the emotional texture within a genre. Danceability and acousticness are supporting signals.
+
+| Feature       | Weight | Rationale |
+|---------------|--------|-----------|
+| genre         | 3.0    | Broadest stylistic boundary |
+| mood          | 2.0    | Emotional intent of the listening session |
+| energy        | 1.5    | Core intensity signal |
+| valence       | 1.5    | Emotional tone (dark vs. bright) |
+| acousticness  | 1.0    | Texture signal (organic vs. electronic) |
+| danceability  | 0.5    | Supporting signal, partially redundant with energy |
+
+### Ranking Rule (list of songs)
+
+The scoring rule produces a number for one song. The ranking rule applies that scoring rule to every song in the catalog, sorts the results in descending order, and returns the top N. Without the ranking step, a score is just a number with no context — ranking is what turns individual scores into a recommendation list.
+
+### Song and UserProfile Features
+
+`Song` object fields:
+- `id`, `title`, `artist`
+- `genre` (categorical)
+- `mood` (categorical)
+- `energy` (float, 0–1)
+- `valence` (float, 0–1)
+- `danceability` (float, 0–1)
+- `acousticness` (float, 0–1)
+- `tempo_bpm` (int, used as soft filter only)
+
+`UserProfile` object fields:
+- `preferred_genre` (categorical)
+- `preferred_mood` (categorical)
+- `preferred_energy` (float, 0–1)
+- `preferred_valence` (float, 0–1)
+- `preferred_danceability` (float, 0–1)
+- `preferred_acousticness` (float, 0–1)
 
 ---
 
