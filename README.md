@@ -15,67 +15,87 @@ Replace this paragraph with your own summary of what your version does.
 
 ---
 
+## Data Flow
+
+```mermaid
+flowchart TD
+    A([User Preferences\ngenre · mood · energy\nvalence · danceability · acousticness]) --> C
+
+    B[(songs.csv\n18 songs)] --> C[Load songs\nload_songs]
+
+    C --> D{For each song\nin catalog}
+
+    D --> E[Score song\nscore_song]
+
+    E --> E1[+2.0 genre match?]
+    E --> E2[+1.0 mood match?]
+    E --> E3[energy similarity × 1.5]
+    E --> E4[valence similarity × 1.0]
+    E --> E5[danceability similarity × 0.75]
+    E --> E6[acousticness similarity × 0.75]
+
+    E1 & E2 & E3 & E4 & E5 & E6 --> F[Sum → final score\nmax 7.0 pts]
+
+    F --> D
+
+    D -->|all songs scored| G[Sort descending by score]
+
+    G --> H[Slice top K results]
+
+    H --> I([Ranked Recommendations\nsong · score · reasons])
+```
+
 ## How The System Works
 
-Real-world recommenders like Spotify or YouTube combine two strategies: collaborative filtering (learning from what millions of similar users enjoy) and content-based filtering (matching the actual attributes of songs to a user's taste profile). Our version focuses on content-based filtering — no other users needed. Each song is described by a set of numeric and categorical features, and the system scores every song by measuring how closely it matches what the user prefers. The closer the match across all features, the higher the score. Songs are then ranked by score and the top results are returned as recommendations. This approach is transparent, explainable, and works even for a brand-new user with no listening history.
+This is a content-based recommender — no other users needed. Every song in the catalog is scored against the user's taste profile, then the top K scores are returned as recommendations. The approach is fully transparent: every point in a song's score can be traced back to a specific feature match.
 
-### Scoring Rule (one song)
+### Algorithm Recipe
 
-For each numeric feature, we use a proximity score — not "higher is better," but "closer to the user's preference is better." The formula for a single numeric feature is:
+Scoring happens in two layers for each song:
+
+**Step 1 — Categorical matches (binary, all-or-nothing)**
+
+| Rule | Points |
+|---|---|
+| Song's genre matches user's preferred genre | +2.0 |
+| Song's mood matches user's preferred mood | +1.0 |
+
+**Step 2 — Numeric proximity (how close is close enough?)**
+
+For each numeric feature the formula is:
 
 ```
-proximity = 1 - |song_value - user_preference|
+proximity = 1 - |song_value - user_target|
 ```
 
-This gives 1.0 for a perfect match and approaches 0.0 as the values diverge. Each feature is then multiplied by its weight and summed into a final score:
+A perfect match scores 1.0; the further apart the values, the closer to 0.0. Each proximity is then multiplied by its weight:
 
-```
-score = (w_energy   × proximity(energy))
-      + (w_valence  × proximity(valence))
-      + (w_acoustic × proximity(acousticness))
-      + (w_dance    × proximity(danceability))
-      + (w_genre    × exact_match(genre))
-      + (w_mood     × exact_match(mood))
-```
+| Feature | Weight | Why this weight |
+|---|---|---|
+| energy | ×1.5 | Biggest driver of how a song feels — intensity matters most |
+| valence | ×1.0 | Emotional tone (bright vs. dark) |
+| danceability | ×0.75 | Groove feel, supporting signal |
+| acousticness | ×0.75 | Organic vs. electronic texture |
 
-Categorical features (genre, mood) use a binary match: 1.0 if they match, 0.0 if not.
+**Max possible score: 7.0 points** (2.0 + 1.0 + 1.5 + 1.0 + 0.75 + 0.75)
 
-### Weights
+**Step 3 — Ranking**
 
-Genre carries the highest weight because it represents the broadest stylistic boundary — recommending a metal track to a lofi listener is a bigger miss than a slight energy mismatch. Mood is weighted second because it captures emotional intent (a user wanting "chill" music doesn't want "intense" regardless of genre). Numeric features like energy and valence are weighted next since they define the emotional texture within a genre. Danceability and acousticness are supporting signals.
+After every song is scored, the list is sorted in descending order and the top K results are returned. Without this step a score is just a number — ranking is what turns individual scores into a recommendation list.
 
-| Feature       | Weight | Rationale |
-|---------------|--------|-----------|
-| genre         | 3.0    | Broadest stylistic boundary |
-| mood          | 2.0    | Emotional intent of the listening session |
-| energy        | 1.5    | Core intensity signal |
-| valence       | 1.5    | Emotional tone (dark vs. bright) |
-| acousticness  | 1.0    | Texture signal (organic vs. electronic) |
-| danceability  | 0.5    | Supporting signal, partially redundant with energy |
+---
 
-### Ranking Rule (list of songs)
+### Known Biases and Limitations
 
-The scoring rule produces a number for one song. The ranking rule applies that scoring rule to every song in the catalog, sorts the results in descending order, and returns the top N. Without the ranking step, a score is just a number with no context — ranking is what turns individual scores into a recommendation list.
+- **Genre dominance.** At +2.0 points, a genre match is worth more than any single numeric feature. A perfect-vibe song in a slightly different genre (e.g., indie pop vs. pop) will almost always lose to a mediocre same-genre song. This can create a "genre bubble" where the user never discovers adjacent styles they might enjoy.
 
-### Song and UserProfile Features
+- **Mood is binary.** "Chill" either matches or it doesn't — there's no partial credit for a song that's close in feel but labeled differently. Two songs with nearly identical energy and valence can score very differently just because of how their mood tag was assigned.
 
-`Song` object fields:
-- `id`, `title`, `artist`
-- `genre` (categorical)
-- `mood` (categorical)
-- `energy` (float, 0–1)
-- `valence` (float, 0–1)
-- `danceability` (float, 0–1)
-- `acousticness` (float, 0–1)
-- `tempo_bpm` (int, used as soft filter only)
+- **Small catalog amplifies bias.** With only 18 songs, some genres and moods appear only once. A user who prefers "jazz" or "funk" will always get the same top result regardless of how well the numeric features align.
 
-`UserProfile` object fields:
-- `preferred_genre` (categorical)
-- `preferred_mood` (categorical)
-- `preferred_energy` (float, 0–1)
-- `preferred_valence` (float, 0–1)
-- `preferred_danceability` (float, 0–1)
-- `preferred_acousticness` (float, 0–1)
+- **No diversity enforcement.** The ranker always picks the closest matches, so results can cluster around one or two artists or sub-genres. A real recommender would inject some variety to avoid a monotonous list.
+
+- **Tempo is ignored.** `tempo_bpm` is loaded but not scored. A 168 BPM metal track and a 72 BPM lofi track could score identically if their other features happen to align.
 
 ---
 
